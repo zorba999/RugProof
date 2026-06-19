@@ -1,0 +1,25 @@
+{
+  "name": "rugproof",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "deploy:contract": "node scripts/deploy.mjs",
+    "inspect:sdk": "node scripts/inspect-sdk.mjs"
+  },
+  "dependencies": {
+    "genlayer-js": "^1.1.8",
+    "next": "^14.2.33",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "typescript": "^5.5.3"
+  }
+}
