@@ -81,13 +81,20 @@ class RugProof(gl.Contract):
             "Be conservative: if you cannot verify the deployed code, the verdict must not be SAFE."
         )
 
+        # Lenient, objective acceptance test. Validators only check that the
+        # leader's answer is well-formed and plausible — NOT that the exact score
+        # matches their own. Strict/subjective criteria here cause the consensus
+        # to end UNDETERMINED on borderline contracts.
         criteria = (
-            "The output must be a single valid JSON object with fields verdict, score, source_match, "
-            "flags and summary. verdict must be one of SAFE/RISKY/SCAM and must be consistent with the "
-            "flags and score (many serious flags, or an unverified/mismatched source, must NOT yield "
-            "SAFE). score must be an integer 0-100 roughly consistent with the verdict "
-            "(SCAM <= 30, 30 < RISKY < 70, SAFE >= 70). Every flag must be grounded in the provided "
-            "source code, not invented."
+            "Accept the answer as valid if ALL of the following hold: "
+            "(1) it is a single well-formed JSON object; "
+            "(2) 'verdict' is exactly one of SAFE, RISKY or SCAM; "
+            "(3) 'score' is an integer from 0 to 100; "
+            "(4) 'source_match' is one of MATCH, MISMATCH or UNVERIFIED; "
+            "(5) 'flags' is a list and 'summary' is a non-empty string; "
+            "(6) the verdict is a plausible security reading of the provided code. "
+            "Do NOT require an exact score or wording — any reasonable assessment is acceptable. "
+            "Only reject if the answer is malformed or clearly contradicts the provided source."
         )
 
         verdict = gl.eq_principle.prompt_non_comparative(

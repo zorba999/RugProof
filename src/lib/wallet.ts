@@ -3,11 +3,52 @@
 import { createClient } from "genlayer-js";
 import { testnetBradbury } from "genlayer-js/chains";
 
-// Browser-side EVM wallet adapter for GenLayer (MetaMask + GenLayer snap).
+// Browser-side EVM wallet adapter for GenLayer.
 // The connected wallet signs and pays for the analyze transaction itself.
 
 export const PUBLIC_CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_CONTRACT_ADDRESS ||
   "") as `0x${string}`;
+
+const BRADBURY_CHAIN_ID_HEX = `0x${testnetBradbury.id.toString(16)}`; // 4221 -> 0x107d
+const BRADBURY_PARAMS = {
+  chainId: BRADBURY_CHAIN_ID_HEX,
+  chainName: testnetBradbury.name,
+  rpcUrls: testnetBradbury.rpcUrls.default.http,
+  nativeCurrency: testnetBradbury.nativeCurrency,
+  blockExplorerUrls: [testnetBradbury.blockExplorers?.default.url].filter(Boolean),
+};
+
+// Turn MetaMask / RPC error objects into a readable message.
+export function walletErrorMessage(e: unknown): string {
+  if (e && typeof e === "object") {
+    const o = e as { code?: number; message?: string; data?: { message?: string } };
+    if (o.code === 4001) return "You rejected the request in your wallet.";
+    if (o.data?.message) return o.data.message;
+    if (o.message) return o.message;
+  }
+  if (e instanceof Error) return e.message;
+  return "Failed to connect wallet";
+}
+
+// Add / switch the wallet to the Bradbury network (no snap required).
+async function ensureBradburyNetwork(eth: NonNullable<Window["ethereum"]>) {
+  const current = (await eth.request({ method: "eth_chainId" })) as string;
+  if (current?.toLowerCase() === BRADBURY_CHAIN_ID_HEX.toLowerCase()) return;
+  try {
+    await eth.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: BRADBURY_CHAIN_ID_HEX }],
+    });
+  } catch (err) {
+    // 4902 = chain not added yet -> add it, then it's selected.
+    const code = (err as { code?: number })?.code;
+    if (code === 4902 || code === -32603) {
+      await eth.request({ method: "wallet_addEthereumChain", params: [BRADBURY_PARAMS] });
+    } else {
+      throw err;
+    }
+  }
+}
 
 export type WalletSession = {
   address: `0x${string}`;
@@ -29,15 +70,15 @@ export async function connectWallet(): Promise<WalletSession> {
   if (!accounts || accounts.length === 0) throw new Error("No account authorized");
   const address = accounts[0] as `0x${string}`;
 
+  // Make sure the wallet is on the Bradbury network (adds it if missing).
+  await ensureBradburyNetwork(eth);
+
   // account as a plain address routes signing through the injected provider.
   const client = createClient({
     chain: testnetBradbury,
     account: address,
     provider: eth,
   } as Parameters<typeof createClient>[0]);
-
-  // Adds/switches to the Bradbury network and installs the GenLayer snap.
-  await client.connect("testnetBradbury");
 
   return { address, client };
 }

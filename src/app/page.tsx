@@ -8,6 +8,7 @@ import {
   getReport,
   hasWallet,
   shortAddr,
+  walletErrorMessage,
   type WalletSession,
   type Verdict as Report,
 } from "@/lib/wallet";
@@ -54,7 +55,7 @@ export default function Home() {
       sessionRef.current = session;
       setWalletAddr(session.address);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to connect wallet");
+      setError(walletErrorMessage(err));
     } finally {
       setConnecting(false);
     }
@@ -75,29 +76,38 @@ export default function Home() {
         throw new Error("Connect your wallet first — it will sign and pay for the scan.");
       }
 
+      // Snapshot any existing verdict for this address so we can tell when THIS
+      // scan produces a fresh one (avoids showing a stale report on re-scans).
+      const before = await getReport(address).catch(() => ({ raw: "" }));
+      const beforeRaw = before.raw || "";
+
       // The connected wallet signs & pays for the transaction.
       setStage("Confirm the transaction in your wallet…");
       const txId = await analyzeViaWallet(sessionRef.current, { address, githubUrl, chain });
 
       setStage("Validators are auditing the contract (this takes 30–90s)…");
 
-      // Poll consensus status + report directly from the chain (no env account).
+      // Poll the on-chain verdict until it changes from the snapshot.
+      // Status polling is best-effort (just for the progress label).
       const started = Date.now();
-      const TIMEOUT = 5 * 60 * 1000;
+      const TIMEOUT = 6 * 60 * 1000;
       while (!cancelled.current && Date.now() - started < TIMEOUT) {
-        await sleep(5000);
+        await sleep(4000);
 
-        const st = await getTxStatus(txId);
-        if (st.failed) throw new Error(`Consensus did not resolve (status: ${st.status}). Try again.`);
-        if (st.status && !st.done) setStage(`Validators auditing… (${st.status.toLowerCase()})`);
+        // Best-effort progress label — never let it break the loop.
+        try {
+          const st = await getTxStatus(txId);
+          if (st.failed) throw new Error(`Consensus did not resolve (status: ${st.status}). Try again.`);
+          if (!st.done) setStage(`Validators auditing… (${st.status.toLowerCase()})`);
+          else setStage("Finalizing the verdict…");
+        } catch (e) {
+          if (e instanceof Error && e.message.startsWith("Consensus did not resolve")) throw e;
+        }
 
-        const rep = await getReport(address);
-        if (rep.ready) {
-          if (rep.report) {
-            setReport(rep.report as Report);
-          } else {
-            setRawFallback(rep.raw || "");
-          }
+        const rep = await getReport(address).catch(() => null);
+        if (rep?.ready && rep.raw !== beforeRaw) {
+          if (rep.report) setReport(rep.report as Report);
+          else setRawFallback(rep.raw || "");
           setStage("");
           setBusy(false);
           return;
@@ -105,7 +115,7 @@ export default function Home() {
       }
       throw new Error("Timed out waiting for the verdict. The transaction may still finalize — try reading the report again shortly.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      setError(walletErrorMessage(err));
       setStage("");
       setBusy(false);
     }

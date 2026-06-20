@@ -44,11 +44,11 @@ const txHash = await client.deployContract({
 });
 console.log("Deploy tx:", txHash);
 
-console.log("Waiting for finalization (this can take a minute)...");
+console.log("Waiting for acceptance (this can take a minute)...");
 const receipt = await client.waitForTransactionReceipt({
   hash: txHash,
-  status: TransactionStatus.FINALIZED,
-  retries: 200,
+  status: TransactionStatus.ACCEPTED,
+  retries: 120,
   interval: 5000,
 });
 
@@ -81,11 +81,11 @@ function findAddress(obj, seen = new Set()) {
 }
 
 const explicit =
+  receipt?.recipient ||
+  receipt?.txDataDecoded?.contractAddress ||
   receipt?.data?.contract_address ||
   receipt?.contract_address ||
-  receipt?.contractAddress ||
-  receipt?.data?.contractAddress ||
-  receipt?.deployed_contract_address;
+  receipt?.contractAddress;
 const scanned = findAddress(receipt);
 const addr = explicit || scanned?.value;
 if (scanned) console.log("Scanned candidate:", scanned.key, "=", scanned.value);
@@ -96,16 +96,15 @@ if (!addr) {
 
 console.log("\n✅ RugProof deployed at:", addr);
 
-// Persist the address into .env.local so the app picks it up.
+// Persist the address into .env.local so both the deploy and the app pick it up.
 const envPath = join(root, ".env.local");
 let env = readFileSync(envPath, "utf-8");
-if (/^CONTRACT_ADDRESS=.*$/m.test(env)) {
-  env = env.replace(/^CONTRACT_ADDRESS=.*$/m, `CONTRACT_ADDRESS=${addr}`);
-} else {
-  env += `\nCONTRACT_ADDRESS=${addr}\n`;
+for (const key of ["CONTRACT_ADDRESS", "NEXT_PUBLIC_CONTRACT_ADDRESS"]) {
+  const re = new RegExp(`^${key}=.*$`, "m");
+  if (re.test(env)) env = env.replace(re, `${key}=${addr}`);
+  else env += `\n${key}=${addr}\n`;
 }
 writeFileSync(envPath, env);
-console.log("Saved CONTRACT_ADDRESS to .env.local");
-console.log("\nFor Vercel, set these env vars:");
-console.log("  GENLAYER_PRIVATE_KEY = (your key)");
-console.log("  CONTRACT_ADDRESS     =", addr);
+console.log("Saved CONTRACT_ADDRESS + NEXT_PUBLIC_CONTRACT_ADDRESS to .env.local");
+console.log("\nFor Vercel, set:");
+console.log("  NEXT_PUBLIC_CONTRACT_ADDRESS =", addr);
