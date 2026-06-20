@@ -1,14 +1,16 @@
 "use client";
 
-import { useState, useRef } from "react";
-
-type Report = {
-  verdict?: "SAFE" | "RISKY" | "SCAM";
-  score?: number;
-  source_match?: "MATCH" | "MISMATCH" | "UNVERIFIED";
-  flags?: string[];
-  summary?: string;
-};
+import { useState, useRef, useEffect } from "react";
+import {
+  connectWallet,
+  analyzeViaWallet,
+  getTxStatus,
+  getReport,
+  hasWallet,
+  shortAddr,
+  type WalletSession,
+  type Verdict as Report,
+} from "@/lib/wallet";
 
 const CHAINS = ["ethereum", "base", "bsc", "polygon", "arbitrum", "optimism", "avalanche"];
 
@@ -23,6 +25,41 @@ export default function Home() {
   const [rawFallback, setRawFallback] = useState("");
   const cancelled = useRef(false);
 
+  // Wallet adapter state
+  const [walletAddr, setWalletAddr] = useState<string>("");
+  const [connecting, setConnecting] = useState(false);
+  const sessionRef = useRef<WalletSession | null>(null);
+
+  useEffect(() => {
+    const eth = typeof window !== "undefined" ? window.ethereum : undefined;
+    if (!eth?.on) return;
+    const onAccounts = (...args: unknown[]) => {
+      const accounts = (args[0] as string[]) || [];
+      if (accounts.length === 0) {
+        sessionRef.current = null;
+        setWalletAddr("");
+      } else {
+        setWalletAddr(accounts[0]);
+      }
+    };
+    eth.on("accountsChanged", onAccounts);
+    return () => eth.removeListener?.("accountsChanged", onAccounts);
+  }, []);
+
+  async function onConnect() {
+    setError("");
+    setConnecting(true);
+    try {
+      const session = await connectWallet();
+      sessionRef.current = session;
+      setWalletAddr(session.address);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to connect wallet");
+    } finally {
+      setConnecting(false);
+    }
+  }
+
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   async function run(e: React.FormEvent) {
@@ -34,30 +71,27 @@ export default function Home() {
     cancelled.current = false;
 
     try {
-      setStage("Submitting analysis transaction to GenLayer…");
-      const res = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address, githubUrl, chain }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to submit analysis");
+      if (!sessionRef.current) {
+        throw new Error("Connect your wallet first — it will sign and pay for the scan.");
+      }
 
-      const txId: string = data.txId;
+      // The connected wallet signs & pays for the transaction.
+      setStage("Confirm the transaction in your wallet…");
+      const txId = await analyzeViaWallet(sessionRef.current, { address, githubUrl, chain });
+
       setStage("Validators are auditing the contract (this takes 30–90s)…");
 
-      // Poll the consensus status for nicer feedback.
+      // Poll consensus status + report directly from the chain (no env account).
       const started = Date.now();
       const TIMEOUT = 5 * 60 * 1000;
       while (!cancelled.current && Date.now() - started < TIMEOUT) {
         await sleep(5000);
 
-        const st = await fetch(`/api/status?txId=${txId}`).then((r) => r.json());
+        const st = await getTxStatus(txId);
         if (st.failed) throw new Error(`Consensus did not resolve (status: ${st.status}). Try again.`);
         if (st.status && !st.done) setStage(`Validators auditing… (${st.status.toLowerCase()})`);
 
-        // Once accepted/finalized, the report is readable.
-        const rep = await fetch(`/api/report?address=${encodeURIComponent(address)}`).then((r) => r.json());
+        const rep = await getReport(address);
         if (rep.ready) {
           if (rep.report) {
             setReport(rep.report as Report);
@@ -82,9 +116,26 @@ export default function Home() {
 
   return (
     <div className="wrap">
-      <div className="brand">
-        <div className="logo">🛡️</div>
-        <h1>RugProof</h1>
+      <div className="topbar">
+        <div className="brand">
+          <div className="logo">🛡️</div>
+          <h1>RugProof</h1>
+        </div>
+        {walletAddr ? (
+          <div className="wallet-pill" title={walletAddr}>
+            <span className="dot" />
+            {shortAddr(walletAddr)}
+          </div>
+        ) : (
+          <button
+            className="connect"
+            type="button"
+            onClick={onConnect}
+            disabled={connecting || !hasWallet()}
+          >
+            {connecting ? "Connecting…" : hasWallet() ? "Connect Wallet" : "No wallet found"}
+          </button>
+        )}
       </div>
       <p className="tagline">
         Does the deployed contract really match its GitHub source — and is it free of rug-pull
@@ -124,10 +175,19 @@ export default function Home() {
             </select>
           </div>
           <div style={{ display: "flex", alignItems: "flex-end" }}>
-            <button className="scan" type="submit" disabled={busy || !address || !githubUrl}>
-              {busy ? "Scanning…" : "Scan contract"}
+            <button
+              className="scan"
+              type="submit"
+              disabled={busy || !address || !githubUrl || !walletAddr}
+            >
+              {busy ? "Scanning…" : walletAddr ? "Scan contract" : "Connect wallet to scan"}
             </button>
           </div>
+        </div>
+        <div className="hint">
+          {walletAddr
+            ? "Your connected wallet signs & pays for this scan (needs Bradbury GEN for gas)."
+            : "Connect your EVM wallet — it will sign and pay for the scan transaction."}
         </div>
       </form>
 

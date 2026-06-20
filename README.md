@@ -20,18 +20,18 @@ Output: `verdict` (SAFE / RISKY / SCAM), a `score` 0–100, `source_match`, and 
 
 ## Architecture
 
-```
-Browser ──► /api/analyze ─(writeContract: analyze)─► RugProof contract ──► web + AI + consensus
-   ▲                                                        │
-   └──── /api/report ◄─(readContract: get_report)───────────┘
-```
+The dapp is **wallet-driven** — the user's connected EVM wallet (MetaMask + the GenLayer
+snap) signs and pays for the analysis. There is no server-side account in the request path.
 
-The faucet **private key lives only server-side** (Next.js API routes). The browser
-never sees it.
+```
+Browser + EVM wallet ──(writeContract: analyze, user-signed)──► RugProof contract
+        ▲                                                              │  web + AI + consensus
+        └───────────(readContract: get_report, public RPC)────────────┘
+```
 
 - `contracts/rugproof.py` — the GenLayer intelligent contract.
-- `scripts/deploy.mjs` — deploy it to the Bradbury testnet.
-- `src/app/api/*` — server routes that talk to GenLayer with the faucet account.
+- `scripts/deploy.mjs` — deploy it to the Bradbury testnet (uses a funded key locally).
+- `src/lib/wallet.ts` — EVM wallet adapter: connect, network switch, submit, read.
 - `src/app/page.tsx` — the UI.
 
 ---
@@ -40,16 +40,20 @@ never sees it.
 
 ```bash
 npm install
-cp .env.example .env.local   # then fill in GENLAYER_PRIVATE_KEY
-npm run deploy:contract      # deploys the contract, writes CONTRACT_ADDRESS into .env.local
+cp .env.example .env.local   # fill GENLAYER_PRIVATE_KEY (for deploying only)
+npm run deploy:contract      # deploys the contract, writes the address into .env.local
 npm run dev                  # http://localhost:3000
 ```
 
+After deploy, make sure `NEXT_PUBLIC_CONTRACT_ADDRESS` in `.env.local` matches the
+deployed address (the app reads this in the browser).
+
 ### Try it
 
-- Contract address: any verified token, e.g. on Ethereum
-- GitHub URL: the raw `.sol` file the project claims to have deployed
-- Chain: pick the network
+1. Click **Connect Wallet** (MetaMask). It adds the Bradbury network and the GenLayer snap.
+2. Make sure the wallet has some Bradbury **GEN** for gas (GenLayer faucet/portal).
+3. Enter a contract address, the raw GitHub `.sol` URL, pick the chain, and **Scan**.
+4. Confirm the transaction in your wallet.
 
 ---
 
@@ -57,13 +61,13 @@ npm run dev                  # http://localhost:3000
 
 1. Push this repo to GitHub.
 2. Import it on [Vercel](https://vercel.com).
-3. Add **Environment Variables**:
-   - `GENLAYER_PRIVATE_KEY` — the funded Bradbury faucet key (Production + Preview).
-   - `CONTRACT_ADDRESS` — the deployed RugProof address (from `npm run deploy:contract`).
+3. Add **Environment Variable**:
+   - `NEXT_PUBLIC_CONTRACT_ADDRESS` — the deployed RugProof address.
 4. Deploy.
 
-> ⚠️ The private key controls testnet funds. Keep it only in `.env.local` (gitignored)
-> and in Vercel env vars. Never commit it.
+> The app no longer uses any server-side account — all contract interaction is done by
+> the user's connected wallet. `GENLAYER_PRIVATE_KEY` is only needed locally to run
+> `npm run deploy:contract`, and must never be committed.
 
 ---
 
